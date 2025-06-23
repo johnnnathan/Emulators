@@ -27,5 +27,6 @@ struct emulator {
 void cycle(struct emulator *emu);
 void init_emulator(struct emulator *emu);
 void destroy_emulator(struct emulator *emu);
+void print_state(struct emulator *emu);
 #endif // !EMULATOR_H
 

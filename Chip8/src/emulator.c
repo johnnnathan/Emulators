@@ -1,6 +1,7 @@
 #include "../inc/emulator.h"
 #include "../inc/random.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 const unsigned char chip8_fontset[80] =
 { 
@@ -22,14 +23,40 @@ const unsigned char chip8_fontset[80] =
   0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-void init_emulator(struct emulator *emu){
-    emu->program_counter = 0x200;
+void init_emulator(struct emulator *emu) {
+    for (int i = 0; i < 4096; i++) {
+        emu->memory[i] = 0;
+    }
 
-    int len = sizeof(chip8_fontset) / sizeof(chip8_fontset[0]);
-    for (int i = 0; i < len; i++){
+    int fontset_size = sizeof(chip8_fontset) / sizeof(chip8_fontset[0]);
+    for (int i = 0; i < fontset_size; i++) {
         emu->memory[i] = chip8_fontset[i];
     }
-    return;
+
+    for (int i = 0; i < 16; i++) {
+        emu->registers[i] = 0;
+    }
+
+    emu->index = 0;
+    emu->program_counter = 0x200;
+
+    for (int i = 0; i < 64 * 32; i++) {
+        emu->graphics[i] = 0;
+    }
+
+    for (int i = 0; i < 16; i++) {
+        emu->stack[i] = 0;
+    }
+    emu->stack_pointer = 0;
+
+    emu->delay_timer = 0;
+    emu->sound_timer = 0;
+
+    for (int i = 0; i < 16; i++) {
+        emu->keys[i] = 0;
+    }
+
+    emu->opcode = 0;
 }
 
 void push(struct emulator *emu, unsigned short value){
@@ -52,10 +79,21 @@ void increment_pc(struct emulator *emu){
     emu->program_counter += 2;
 }
 
+void print_state(struct emulator *emu){
+    printf(
+        "PC: %04X | High byte: %02X | Low byte: %02X | Opcode: %04X\n",
+        emu->program_counter,
+        emu->memory[emu->program_counter],
+        emu->memory[emu->program_counter + 1],
+        (emu->memory[emu->program_counter] << 8) | emu->memory[emu->program_counter + 1]
+    );
+}
+
 void cycle(struct emulator *emu){
+
     emu->opcode = emu->memory[emu->program_counter] << 8 | emu->memory[emu->program_counter + 1];
     unsigned char operation = emu->opcode >> 12;
-    unsigned char operand = emu-> opcode & 0xfff;
+    unsigned short operand = emu->opcode & 0x0fff;
 
     switch (operation) {
         case 0:
@@ -78,6 +116,8 @@ void cycle(struct emulator *emu){
             emu->stack[emu->stack_pointer] = emu->program_counter;
             push(emu, emu->program_counter);
             emu->program_counter = operand;
+            increment_pc(emu);
+            break;
         case 3:
             if (emu->registers[(emu->opcode & 0x0f00) >> 8] == (emu->opcode & 0xff)){
                 increment_pc(emu);
@@ -98,13 +138,17 @@ void cycle(struct emulator *emu){
             increment_pc(emu);
             break;
         case 6:
-            set_register(emu, (emu->opcode & 0x0f00) >> 8, emu->opcode & 0xff);
+            set_register(emu, (emu->opcode & 0xf00) >> 8, emu->opcode & 0xff);
             increment_pc(emu);
             break;
-        case 7:
-            set_register(emu, (emu->opcode & 0x0f00) >> 8, (emu->opcode & 0xff) + (emu->registers[emu->opcode & 0x0f00] >> 8));
+        case 7:{
+            int byte_val =(emu->opcode & 0xff); 
+            int reg_val = (emu->registers[emu->opcode & 0xf00] >> 8);
+            int sum =  byte_val + reg_val;
+            set_register(emu, (emu->opcode & 0xf00) >> 8,sum );
             increment_pc(emu);
             break;
+        }
             
         case 8: {
 
@@ -170,12 +214,15 @@ void cycle(struct emulator *emu){
             increment_pc(emu);
             break;
         }
-        case 9:
-            if (emu->registers[(emu->opcode & 0x0f00) >> 8] != emu->registers[(emu->opcode & 0xf0) >> 4]){
+        case 9:{
+            int reg_1 = emu->registers[(emu->opcode & 0x0f00) >> 8];
+            int reg_2 = emu->registers[(emu->opcode & 0xf0) >> 4];
+            if (reg_1 != reg_2){
                 increment_pc(emu);
             }
             increment_pc(emu);
             break;
+        }
         case 0xA:
             emu->index = emu->opcode & 0xfff;
             increment_pc(emu);
@@ -185,41 +232,6 @@ void cycle(struct emulator *emu){
             break;
         case 0xC:
             set_register(emu, (emu->opcode & 0x0f00) >> 8, get_random_value() & (emu->opcode & 0xff));
-            increment_pc(emu);
-            break;
-        case 0xD:
-            set_register(emu, 0xf, 0);
-            
-            unsigned char r1_idx = (emu->opcode & 0xf00) >> 8;
-            unsigned char r2_idx = (emu->opcode & 0xf0) >> 4;
-            unsigned char n = emu->opcode & 0xf;
-
-            unsigned char r1_val = emu->registers[r1_idx];
-            unsigned char r2_val = emu->registers[r2_idx];
-
-            unsigned char y = 0;
-            while (y < n){
-                unsigned char pixel = emu->memory[emu->index + y];
-                unsigned char x = 0;
-                while (x < 8){
-                    const unsigned char msb = 0x80;
-                    if ((pixel & (msb >> x)) != 0){
-                        int x_coord = (r1_val + x) % 64;
-                        int y_coord = (r2_val + x) % 32;
-                        int pixel_idx = x_coord + y_coord * 64;
-
-                        emu->graphics[pixel_idx] ^= 1;
-
-                        if (emu->graphics[pixel_idx] == 0){
-                            set_register(emu, 0xf,1);
-                        }
-
-                    }
-                    x += 1;
-                }
-                y += 1;
-
-            }
             increment_pc(emu);
             break;
         case 0xE:{
@@ -238,6 +250,34 @@ void cycle(struct emulator *emu){
             increment_pc(emu);
             break;
         }
+
+        case 0xD:
+            set_register(emu, 0xF, 0);
+
+            unsigned char r1_idx = (emu->opcode & 0x0F00) >> 8;
+            unsigned char r2_idx = (emu->opcode & 0x00F0) >> 4;
+            unsigned char n = emu->opcode & 0x000F;
+
+            unsigned char x_pos = emu->registers[r1_idx];
+            unsigned char y_pos = emu->registers[r2_idx];
+
+            for (unsigned char y = 0; y < n; y++) {
+                unsigned char pixel = emu->memory[emu->index + y];
+                for (unsigned char x = 0; x < 8; x++) {
+                    if ((pixel & (0x80 >> x)) != 0) {
+                        int x_coord = (x_pos + x) % 64;
+                        int y_coord = (y_pos + y) % 32;
+                        int pixel_idx = x_coord + y_coord * 64;
+
+                        emu->graphics[pixel_idx] ^= 1;  // Toggle pixel
+                        if (emu->graphics[pixel_idx] == 0) {
+                            set_register(emu, 0xF, 1); // Collision detected
+                        }
+                    }
+                }
+            }
+            increment_pc(emu);
+            break;
         case 0xF:{
             unsigned char reg = (emu->opcode & 0xf00) >> 8;
             switch (emu->opcode & 0xff) {
@@ -257,6 +297,7 @@ void cycle(struct emulator *emu){
                         }
                     }
                     if (!key_pressed){
+                        increment_pc(emu);
                         return;
                     }
                     break;
@@ -296,14 +337,12 @@ void cycle(struct emulator *emu){
                 }
 
             }
+            increment_pc(emu);
+            break;
 
         }
         default:{
-
-            unsigned short opcode = emu->opcode;
-            unsigned short reversed = (opcode >> 8) | (opcode << 8);
-
-            printf("Error on Opcode: %04X\n", reversed);
+            printf("Error on Opcode: %04X\n", emu->opcode);
         }
     }
 }

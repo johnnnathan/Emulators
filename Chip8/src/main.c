@@ -12,23 +12,39 @@
 #define HZt 16
 
 
-int load_rom(struct emulator *emu, const char *filename){
-    FILE *fp = fopen(filename, "r"); 
-    char c;
-    int i = 0;;
 
-    if (fp == NULL){
-        printf("Could not open file");
+int load_rom(struct emulator *emu, const char *filename) {
+    FILE *fp = fopen(filename, "rb"); // 'rb' for binary mode
+    if (fp == NULL) {
+        printf("Could not open file: %s\n", filename);
         return 1;
     }
 
-    while ((c = fgetc(fp)) != EOF){
-        emu->memory[0x200 + i] = c;
-        i += 1;
+    // Seek to end to get size
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    rewind(fp);
+
+    printf("ROM File Size: %ld bytes\n", size);
+
+    // Safety check
+    if (size > (4096 - 0x200)) {
+        printf("ROM too large to fit in memory!\n");
+        fclose(fp);
+        return 1;
     }
+
+    // Read directly into memory
+    size_t bytes_read = fread(&emu->memory[0x200], 1, size, fp);
+    if (bytes_read != size) {
+        printf("Failed to read entire ROM\n");
+        fclose(fp);
+        return 1;
+    }
+
+    printf("Loading ROM Succeeded!\n");
     fclose(fp);
     return 0;
-
 }
 
 void build_texture(struct emulator *emu, SDL_Texture *texture) {
@@ -42,9 +58,10 @@ void build_texture(struct emulator *emu, SDL_Texture *texture) {
     for (int y = 0; y < 32; y++) {
         for (int x = 0; x < 64; x++) {
             int index = y * 64 + x;
-            bytes[index] = (emu->graphics[index] == 1) ? 0xFFFFFFFF : 0x000000FF;
+            bytes[index] = (emu->graphics[index] == 1) ? 0xFFFFFFFF : 0xFF000000;
         }
     }
+
 
     SDL_UnlockTexture(texture);
 }
@@ -78,10 +95,9 @@ int main(int argc, char *argv[])
 
     while (alive){
         cycle(&emu);
-        unsigned short opcode = emu.opcode;
-        unsigned short reversed = (opcode >> 8) | (opcode << 8);
-
-        printf("Opcode: %04X\n", reversed);
+        
+        print_state(&emu);
+        // printf("Opcode: %04X\n", emu.opcode);
         while (SDL_PollEvent(&e) > 0){
             switch (e.type){
                 case SDL_QUIT:
@@ -91,6 +107,7 @@ int main(int argc, char *argv[])
 
             }
         }
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
         build_texture(&emu, texture);
