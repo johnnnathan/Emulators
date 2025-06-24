@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 // 60 HZ
-#define HZt 16
+#define HZt 5
 
 
 
@@ -95,9 +95,8 @@ int main(int argc, char *argv[])
 
     while (alive){
         cycle(&emu);
-        
         print_state(&emu);
-        // printf("Opcode: %04X\n", emu.opcode);
+        
         while (SDL_PollEvent(&e) > 0){
             switch (e.type){
                 case SDL_QUIT:
